@@ -71,6 +71,7 @@ class TrustRegionMinimizer : public Minimizer {
                     const double cost,
                     Vector* delta);
   void DoInnerIterationsIfNeeded();
+  void InitializeWithInnerIterationsIfNeeded();
 
   bool ParameterToleranceReached();
   bool FunctionToleranceReached();

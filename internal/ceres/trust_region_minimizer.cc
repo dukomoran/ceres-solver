@@ -201,6 +201,9 @@ bool TrustRegionMinimizer::IterationZero() {
     x_norm_ = x_.norm();
   }
 
+  // Initialize with inner iterations if it is enabled.
+  InitializeWithInnerIterationsIfNeeded();
+  
   if (!EvaluateGradientAndJacobian(/*new_evaluation_point=*/true)) {
     return false;
   }
@@ -372,6 +375,13 @@ bool TrustRegionMinimizer::ComputeTrustRegionStep() {
                  StringPrintf("ceres_solver_iteration_%03d",
                               iteration_summary_.iteration));
   }
+  
+  // If RW2 is enabled, set the offset to zero out some damping factors.
+  if (inner_iterations_are_enabled_ &
+      (options_.inner_iteration_type == RUHE_WEDIN_ALGORITHM_2)) {
+    per_solve_options.zero_damping_offset =
+        options_.inner_iteration_minimizer->UneliminatedParameterOffset();
+  }
 
   TrustRegionStrategy::Summary strategy_summary =
       strategy_->ComputeStep(per_solve_options,
@@ -413,7 +423,8 @@ bool TrustRegionMinimizer::ComputeTrustRegionStep() {
   //  1. What happens if model_cost_change_ = 0
   //  2. What happens if -epsilon <= model_cost_change_ < 0 for some
   //     small epsilon due to round off error.
-  iteration_summary_.step_is_valid = (model_cost_change_ > 0.0);
+  iteration_summary_.step_is_valid =
+      (model_cost_change_ > 0.0) | (!options_.use_step_quality);
   if (iteration_summary_.step_is_valid) {
     // Undo the Jacobian column scaling.
     delta_ = (trust_region_step_.array() * jacobian_scaling_.array()).matrix();
@@ -465,6 +476,42 @@ bool TrustRegionMinimizer::HandleInvalidStep() {
   return true;
 }
 
+// Initialize with inner iterations if it is used.
+void TrustRegionMinimizer::InitializeWithInnerIterationsIfNeeded() {
+  inner_iterations_were_useful_ = false;
+  if (!inner_iterations_are_enabled_) {
+    return;
+  } else if (options_.inner_iteration_type != RUHE_WEDIN_ALGORITHM_2) {
+    return;
+  } else if (!options_.initialize_with_inner_iteration) {
+    return;
+  }
+  
+  double inner_iteration_start_time = WallTimeInSeconds();
+  ++solver_summary_->num_inner_iteration_steps;
+  inner_iteration_x_ = x_;
+  Solver::Summary inner_iteration_summary;
+
+  options_.inner_iteration_minimizer->Minimize(
+       options_, inner_iteration_x_.data(), &inner_iteration_summary);
+  double inner_iteration_cost;
+  if (!evaluator_->Evaluate(
+       inner_iteration_x_.data(), &inner_iteration_cost, NULL, NULL, NULL)) {
+    VLOG_IF(2, is_not_silent_) << "Inner iteration failed.";
+    return;
+  }
+  
+  VLOG_IF(2, is_not_silent_)
+  << "Inner iteration succeeded; Current cost: " << x_cost_
+  << " Inner iteration cost: " << inner_iteration_cost;
+  
+  x_ = inner_iteration_x_;
+  x_cost_ = inner_iteration_cost;
+  
+  solver_summary_->inner_iteration_time_in_seconds +=
+  WallTimeInSeconds() - inner_iteration_start_time;
+}
+  
 // Use the supplied coordinate descent minimizer to perform inner
 // iterations and compute the improvement due to it. Returns the cost
 // after performing the inner iterations.
@@ -741,6 +788,12 @@ bool TrustRegionMinimizer::IsStepSuccessful() {
   iteration_summary_.relative_decrease =
       step_evaluator_->StepQuality(candidate_cost_, model_cost_change_);
 
+  // If step quality is not used, solely judge the step success
+  // based on the actual cost change.
+  if (!options_.use_step_quality) {
+    return (iteration_summary_.cost_change > 0.0);
+  }
+  
   // In most cases, boosting the model_cost_change by the
   // improvement caused by the inner iterations is fine, but it can
   // be the case that the original trust region step was so bad that

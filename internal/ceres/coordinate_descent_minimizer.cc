@@ -71,6 +71,7 @@ bool CoordinateDescentMinimizer::Init(
     const Program& program,
     const ProblemImpl::ParameterMap& parameter_map,
     const ParameterBlockOrdering& ordering,
+    const Solver::Options& options,
     string* error) {
   parameter_blocks_.clear();
   independent_set_offsets_.clear();
@@ -94,6 +95,15 @@ bool CoordinateDescentMinimizer::Init(
         independent_set_offsets_.back() + it->second.size());
   }
 
+  // Obtain the offset for uneliminated parameters.
+  // This is required by Ruhe and Wedin algorithm 2.
+  // Here, we assume that there are at least two sets of parameters.
+  uneliminated_parameter_offset_ = 0;
+  for (int i = 0; i < independent_set_offsets_[1]; ++i) {
+    uneliminated_parameter_offset_ +=
+        parameter_blocks_[i]->LocalSize();
+  }
+  
   // The ordering does not have to contain all parameter blocks, so
   // assign zero offsets/empty independent sets to these parameter
   // blocks.
@@ -127,6 +137,20 @@ bool CoordinateDescentMinimizer::Init(
   evaluator_options_.num_threads = 1;
   evaluator_options_.context = context_;
 
+  // Set minimizer options.
+  options_.jacobi_scaling = options.jacobi_scaling;
+  options_.function_tolerance = options.function_tolerance;
+  options_.max_num_consecutive_invalid_steps = options.max_num_consecutive_invalid_steps;
+  if (options.use_linear_inner_iterations) {
+    options_.max_num_iterations = 1;
+  } else {
+    options_.max_num_iterations = options.max_num_inner_iterations;
+  }
+  
+  // Set trust-region strategy options.
+  trs_options_.infinite_radius = options.use_linear_inner_iterations;
+  trs_options_.lm_damping_type = options.lm_damping_type;
+  
   return true;
 }
 
@@ -243,13 +267,13 @@ void CoordinateDescentMinimizer::Solve(Program* program,
   summary->final_cost = 0.0;
   string error;
 
-  Minimizer::Options minimizer_options;
+  Minimizer::Options minimizer_options = options_;
   minimizer_options.evaluator.reset(
       CHECK_NOTNULL(Evaluator::Create(evaluator_options_, program, &error)));
   minimizer_options.jacobian.reset(
       CHECK_NOTNULL(minimizer_options.evaluator->CreateJacobian()));
 
-  TrustRegionStrategy::Options trs_options;
+  TrustRegionStrategy::Options trs_options = trs_options_;
   trs_options.linear_solver = linear_solver;
   minimizer_options.trust_region_strategy.reset(
       CHECK_NOTNULL(TrustRegionStrategy::Create(trs_options)));
@@ -290,6 +314,10 @@ ParameterBlockOrdering* CoordinateDescentMinimizer::CreateOrdering(
   ComputeRecursiveIndependentSetOrdering(program, ordering.get());
   ordering->Reverse();
   return ordering.release();
+}
+  
+int CoordinateDescentMinimizer::UneliminatedParameterOffset() const {
+  return uneliminated_parameter_offset_;
 }
 
 }  // namespace internal

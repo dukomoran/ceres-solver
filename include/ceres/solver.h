@@ -76,11 +76,14 @@ class CERES_EXPORT Solver {
       line_search_sufficient_curvature_decrease = 0.9;
       max_line_search_step_expansion = 10.0;
       trust_region_strategy_type = LEVENBERG_MARQUARDT;
+      trust_region_radius_update_type = TRUST_REGION_UPDATE;
+      infinite_trust_region_radius = false;
       lm_damping_type = MARQUARDT;
       dogleg_type = TRADITIONAL_DOGLEG;
       use_nonmonotonic_steps = false;
       max_consecutive_nonmonotonic_steps = 5;
       max_num_iterations = 50;
+      max_num_inner_iterations = 50;
       max_solver_time_in_seconds = 1e9;
       num_threads = 1;
       initial_trust_region_radius = 1e4;
@@ -129,7 +132,11 @@ class CERES_EXPORT Solver {
       eta = 1e-1;
       jacobi_scaling = true;
       use_inner_iterations = false;
+      inner_iteration_type = EMBEDDED_POINT_ITERATION;
       inner_iteration_tolerance = 1e-3;
+      use_linear_inner_iterations = false;
+      use_block_qr_for_rw2 = true;
+      initialize_with_inner_iteration = true;
       logging_type = PER_MINIMIZER_ITERATION;
       minimizer_progress_to_stdout = false;
       trust_region_problem_dump_directory = "/tmp";
@@ -308,6 +315,12 @@ class CERES_EXPORT Solver {
 
     TrustRegionStrategyType trust_region_strategy_type;
 
+    // Type of trust region radius update for LevenbergMarquardtStrategy.
+    RadiusUpdateType trust_region_radius_update_type;
+    
+    // Assume infinite trust region radius for all parameters.
+    bool infinite_trust_region_radius;
+    
     // Type of damping to use for LevenbergMarquardtStrategy.
     DampingType lm_damping_type;
     
@@ -344,6 +357,7 @@ class CERES_EXPORT Solver {
 
     // Maximum number of iterations for the minimizer to run for.
     int max_num_iterations;
+    int max_num_inner_iterations;
 
     // Maximum time for which the minimizer should run for.
     double max_solver_time_in_seconds;
@@ -624,6 +638,9 @@ class CERES_EXPORT Solver {
     // Solver::Options::num_threads to the maximum number possible is
     // highly recommended.
     bool use_inner_iterations;
+    
+    // Type of inner iteration to use for trust-region strategy.
+    InnerIterationType inner_iteration_type;
 
     // If inner_iterations is true, then the user has two choices.
     //
@@ -764,6 +781,16 @@ class CERES_EXPORT Solver {
     // IterationCallbacks are called, the user visible state will be
     // updated to the current best point found by the solver.
     bool update_state_every_iteration;
+
+    // Exploit the closed form elimination for linear inner iterations. (Improves the algorithm speed.)
+    bool use_linear_inner_iterations;
+    
+    // This improves the algorithm success rate for VarPro (RW2).
+    bool use_block_qr_for_rw2;
+    
+    // Below flag needs to be true make inner iterations RW2.
+    // (Created for test purpose only.)
+    bool initialize_with_inner_iteration;
 
     // Callbacks that are executed at the end of each iteration of the
     // Minimizer. An iteration may terminate midway, either due to
@@ -1037,6 +1064,14 @@ class CERES_EXPORT Solver {
     // they were actually performed. e.g., in a problem with just one
     // parameter block, inner iterations are not performed.
     bool inner_iterations_used;
+    
+    // Type of inner iteration to use.
+    InnerIterationType inner_iteration_type;
+    
+    // Other options related to inner iteration.
+    bool linear_inner_iterations;
+    bool block_qr_for_rw2;
+    bool initialize_with_inner_iteration;
 
     // Size of the parameter groups given by the user for performing
     // inner iterations.
@@ -1068,6 +1103,12 @@ class CERES_EXPORT Solver {
     //  Type of trust region strategy.
     TrustRegionStrategyType trust_region_strategy_type;
 
+    // Type of trust-region radius update strategy to use.
+    RadiusUpdateType trust_region_radius_update_type;
+    
+    // Assume infinite trust region radius for all parameters.
+    bool infinite_trust_region_radius;
+    
     // Type of damping to use for LevenbergMarquardtStrategy.
     DampingType lm_damping_type;
     

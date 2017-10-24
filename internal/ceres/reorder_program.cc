@@ -518,9 +518,9 @@ bool ReorderProgramForSchurTypeLinearSolver(
 
   if (linear_solver_type == SPARSE_SCHUR) {
     if (sparse_linear_algebra_library_type == SUITE_SPARSE) {
-      MaybeReorderSchurComplementColumnsUsingSuiteSparse(
-          *parameter_block_ordering,
-          program);
+//      MaybeReorderSchurComplementColumnsUsingSuiteSparse(
+//          *parameter_block_ordering,
+//          program);
     } else if (sparse_linear_algebra_library_type == EIGEN_SPARSE) {
       MaybeReorderSchurComplementColumnsUsingEigen(
           size_of_first_elimination_group,

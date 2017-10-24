@@ -197,6 +197,11 @@ class SchurEliminatorBase {
                          const double* D,
                          BlockRandomAccessMatrix* lhs,
                          double* rhs) = 0;
+  virtual void EliminateUsingBlockQR(const BlockSparseMatrix* A,
+                                     const double* b,
+                                     const double* D,
+                                     BlockRandomAccessMatrix* lhs,
+                                     double* rhs) = 0;
 
   // Given values for the variables z in the F block of A, solve for
   // the optimal values of the variables y corresponding to the E
@@ -240,6 +245,11 @@ class SchurEliminator : public SchurEliminatorBase {
                          const double* D,
                          BlockRandomAccessMatrix* lhs,
                          double* rhs);
+  virtual void EliminateUsingBlockQR(const BlockSparseMatrix* A,
+                                     const double* b,
+                                     const double* D,
+                                     BlockRandomAccessMatrix* lhs,
+                                     double* rhs);
   virtual void BackSubstitute(const BlockSparseMatrix* A,
                               const double* b,
                               const double* D,
@@ -285,8 +295,16 @@ class SchurEliminator : public SchurEliminatorBase {
       const BlockSparseMatrix* A,
       const double* b,
       int row_block_counter,
-      typename EigenTypes<kEBlockSize, kEBlockSize>::Matrix* eet,
+      typename EigenTypes<kEBlockSize, kEBlockSize>::Matrix* ete,
       double* g,
+      double* buffer,
+      BlockRandomAccessMatrix* lhs);
+  void ChunkDiagonalBlockUsingBlockQR(
+      const Chunk& chunk,
+      const BlockSparseMatrix* A,
+      const double* b,
+      int row_block_counter,
+      const Matrix& eq,
       double* buffer,
       BlockRandomAccessMatrix* lhs);
 
@@ -296,6 +314,12 @@ class SchurEliminator : public SchurEliminatorBase {
                  int row_block_counter,
                  const double* inverse_ete_g,
                  double* rhs);
+  void UpdateRhsUsingBlockQR(const Chunk& chunk,
+                             const BlockSparseMatrix* A,
+                             const double* b,
+                             int row_block_counter,
+                             const double* eqeqt_b,
+                             double* rhs);
 
   void ChunkOuterProduct(int thread_id,
                          const CompressedRowBlockStructure* bs,
@@ -303,6 +327,12 @@ class SchurEliminator : public SchurEliminatorBase {
                          const double* buffer,
                          const BufferLayoutType& buffer_layout,
                          BlockRandomAccessMatrix* lhs);
+  void ChunkOuterProductUsingBlockQR(const CompressedRowBlockStructure* bs,
+                                     const Matrix& eq,
+                                     const double* buffer,
+                                     const BufferLayoutType& buffer_layout,
+                                     BlockRandomAccessMatrix* lhs);
+  
   void EBlockRowOuterProduct(const BlockSparseMatrix* A,
                              int row_block_index,
                              BlockRandomAccessMatrix* lhs);
@@ -329,6 +359,10 @@ class SchurEliminator : public SchurEliminatorBase {
   // system. Thus lhs_row_layout_[i] is the row/col position of the
   // i^th f block.
   std::vector<int> lhs_row_layout_;
+  
+  // Store the number of rows for each block.
+  // Required for block QR factorization.
+  std::vector<int> block_row_size_;
 
   // Combinatorial structure of the chunks in A. For more information
   // see the documentation of the Chunk object above.

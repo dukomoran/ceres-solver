@@ -152,6 +152,38 @@ bool StringToTrustRegionStrategyType(string value,
   return false;
 }
 
+const char* RadiusUpdateTypeToString(RadiusUpdateType type) {
+  switch(type) {
+      CASESTR(TRADITIONAL_UPDATE);
+      CASESTR(TRUST_REGION_UPDATE);
+    default:
+      return "UNKNOWN";
+  }
+}
+
+bool StringToRadiusUpdateType(string value, RadiusUpdateType* type) {
+  UpperCase(&value);
+  STRENUM(TRADITIONAL_UPDATE);
+  STRENUM(TRUST_REGION_UPDATE);
+  return false;
+}
+  
+const char* InnerIterationTypeToString(InnerIterationType type) {
+  switch(type) {
+      CASESTR(EMBEDDED_POINT_ITERATION);
+      CASESTR(RUHE_WEDIN_ALGORITHM_2);
+    default:
+      return "UNKNOWN";
+  }
+}
+  
+bool StringToInnerIterationType(string value, InnerIterationType* type) {
+  UpperCase(&value);
+  STRENUM(EMBEDDED_POINT_ITERATION);
+  STRENUM(RUHE_WEDIN_ALGORITHM_2);
+  return false;
+}
+
 const char* DampingTypeToString(DampingType type) {
   switch(type) {
       CASESTR(LEVENBERG);

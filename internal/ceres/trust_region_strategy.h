@@ -58,6 +58,8 @@ class TrustRegionStrategy {
   struct Options {
     Options()
         : trust_region_strategy_type(LEVENBERG_MARQUARDT),
+          radius_update_type(TRUST_REGION_UPDATE),
+          infinite_radius(false),
           lm_damping_type(MARQUARDT),
           initial_radius(1e4),
           max_radius(1e32),
@@ -67,6 +69,8 @@ class TrustRegionStrategy {
     }
 
     TrustRegionStrategyType trust_region_strategy_type;
+    RadiusUpdateType radius_update_type;
+    bool infinite_radius;
     DampingType lm_damping_type;
     
     // Linear solver used for actually solving the trust region step.
@@ -89,11 +93,19 @@ class TrustRegionStrategy {
   struct PerSolveOptions {
     PerSolveOptions()
         : eta(0),
+          zero_damping_offset(0),
+          use_block_qr_for_inner_iterations(false),
           dump_format_type(TEXTFILE) {
     }
 
     // Forcing sequence for inexact solves.
     double eta;
+    
+    // RW2 requires a set of damping factors to be zeroed out.
+    int zero_damping_offset;
+    
+    // RW2 success rate can be improved by using block QR factorization.
+    bool use_block_qr_for_inner_iterations;
 
     DumpFormatType dump_format_type;
 

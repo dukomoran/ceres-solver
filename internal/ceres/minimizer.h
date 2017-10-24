@@ -108,7 +108,10 @@ class Minimizer {
           options.line_search_sufficient_curvature_decrease;
       max_line_search_step_expansion =
           options.max_line_search_step_expansion;
+      inner_iteration_type = options.inner_iteration_type;
       inner_iteration_tolerance = options.inner_iteration_tolerance;
+      initialize_with_inner_iteration = options.initialize_with_inner_iteration;
+      use_step_quality = options.trust_region_radius_update_type == TRUST_REGION_UPDATE;
       is_silent = (options.logging_type == SILENT);
       is_constrained = false;
       callbacks = options.callbacks;
@@ -151,7 +154,10 @@ class Minimizer {
     int max_num_line_search_direction_restarts;
     double line_search_sufficient_curvature_decrease;
     double max_line_search_step_expansion;
+    InnerIterationType inner_iteration_type;
     double inner_iteration_tolerance;
+    bool initialize_with_inner_iteration;
+    bool use_step_quality;
 
     // If true, then all logging is disabled.
     bool is_silent;

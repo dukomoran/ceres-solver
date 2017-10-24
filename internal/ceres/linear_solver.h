@@ -111,6 +111,8 @@ class LinearSolver {
           use_postordering(false),
           dynamic_sparsity(false),
           use_explicit_schur_complement(false),
+          use_block_qr_for_rw2(false),
+          skip_backsubstitute_for_inner_iterations(false),
           min_num_iterations(1),
           max_num_iterations(1),
           num_threads(1),
@@ -131,6 +133,8 @@ class LinearSolver {
     bool use_postordering;
     bool dynamic_sparsity;
     bool use_explicit_schur_complement;
+    bool use_block_qr_for_rw2;
+    bool skip_backsubstitute_for_inner_iterations;
 
     // Number of internal iterations that the solver uses. This
     // parameter only makes sense for iterative solvers like CG.
@@ -186,6 +190,7 @@ class LinearSolver {
     PerSolveOptions()
         : D(NULL),
           preconditioner(NULL),
+          rw2_is_enabled(false),
           r_tolerance(0.0),
           q_tolerance(0.0) {
     }
@@ -238,6 +243,12 @@ class LinearSolver {
     LinearOperator* preconditioner;
 
 
+    // If inner iteration (RW2) is enabled, some damping factors
+    // are unavoidably zeros, and this could make inverse_ete to be
+    // worse-conditioned. We may instruct the Schur complement solver
+    // to use block QR factorization for this.
+    bool rw2_is_enabled;
+    
     // The following tolerance related options only makes sense for
     // iterative solvers. Direct solvers ignore them.
 

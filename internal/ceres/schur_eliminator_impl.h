@@ -123,6 +123,7 @@ void SchurEliminator<kRowBlockSize, kEBlockSize, kFBlockSize>::Init(
     Chunk& chunk = chunks_.back();
     chunk.size = 0;
     chunk.start = r;
+    int block_row_size = 0;
     int buffer_size = 0;
     const int e_block_size = bs->cols[chunk_block_id].size;
 
@@ -145,18 +146,20 @@ void SchurEliminator<kRowBlockSize, kEBlockSize, kFBlockSize>::Init(
       }
 
       buffer_size_ = std::max(buffer_size, buffer_size_);
+      block_row_size += row.block.size;
       ++chunk.size;
     }
 
     CHECK_GT(chunk.size, 0);
+    block_row_size_.push_back(block_row_size);
     r += chunk.size;
   }
   const Chunk& chunk = chunks_.back();
 
   uneliminated_row_begins_ = chunk.start + chunk.size;
-  if (num_threads_ > 1) {
-    random_shuffle(chunks_.begin(), chunks_.end());
-  }
+//  if (num_threads_ > 1) {
+//    random_shuffle(chunks_.begin(), chunks_.end());
+//  }
 
   buffer_.reset(new double[buffer_size_ * num_threads_]);
 
@@ -732,6 +735,284 @@ EBlockRowOuterProduct(const BlockSparseMatrix* A,
   }
 }
 
+template <int kRowBlockSize, int kEBlockSize, int kFBlockSize>
+void
+SchurEliminator<kRowBlockSize, kEBlockSize, kFBlockSize>::
+EliminateUsingBlockQR(const BlockSparseMatrix* A,
+                      const double* b,
+                      const double* D,
+                      BlockRandomAccessMatrix* lhs,
+                      double* rhs) {
+  if (lhs->num_rows() > 0) {
+    lhs->SetZero();
+    VectorRef(rhs, lhs->num_rows()).setZero();
+  }
+  
+  const CompressedRowBlockStructure* bs = A->block_structure();
+  const int num_col_blocks = bs->cols.size();
+  
+  // Add the diagonal to the schur complement.
+  if (D != NULL) {
+#pragma omp parallel for num_threads(num_threads_) schedule(dynamic)
+    for (int i = num_eliminate_blocks_; i < num_col_blocks; ++i) {
+      const int block_id = i - num_eliminate_blocks_;
+      int r, c, row_stride, col_stride;
+      CellInfo* cell_info = lhs->GetCell(block_id, block_id,
+                                         &r, &c,
+                                         &row_stride, &col_stride);
+      if (cell_info != NULL) {
+        const int block_size = bs->cols[i].size;
+        typename EigenTypes<Eigen::Dynamic>::ConstVectorRef
+        diag(D + bs->cols[i].position, block_size);
+        
+        CeresMutexLock l(&cell_info->m);
+        MatrixRef m(cell_info->values, row_stride, col_stride);
+        m.block(r, c, block_size, block_size).diagonal()
+        += diag.array().square().matrix();
+      }
+    }
+  }
+  
+  // Eliminate y blocks one chunk at a time.  For each chunk, compute
+  // the entries of the normal equations and the gradient vector block
+  // corresponding to the y block and then apply Gaussian elimination
+  // to them. The matrix ete stores the normal matrix corresponding to
+  // the block being eliminated and array buffer_ contains the
+  // non-zero blocks in the row corresponding to this y block in the
+  // normal equations. This computation is done in
+  // ChunkDiagonalBlockAndGradient. UpdateRhs then applies gaussian
+  // elimination to the rhs of the normal equations, updating the rhs
+  // of the reduced linear system by modifying rhs blocks for all the
+  // z blocks that share a row block/residual term with the y
+  // block. EliminateRowOuterProduct does the corresponding operation
+  // for the lhs of the reduced linear system.
+#pragma omp parallel for num_threads(num_threads_) schedule(dynamic)
+  for (int i = 0; i < chunks_.size(); ++i) {
+#ifdef CERES_USE_OPENMP
+    int thread_id = omp_get_thread_num();
+#else
+    int thread_id = 0;
+#endif
+    double* buffer = buffer_.get() + thread_id * buffer_size_;
+    const Chunk& chunk = chunks_[i];
+    const int e_block_id = bs->rows[chunk.start].cells.front().block_id;
+    const int e_block_col_size = bs->cols[e_block_id].size;
+    const int e_block_row_size = block_row_size_[e_block_id];
+    
+    VectorRef(buffer, buffer_size_).setZero();
+    
+    // We are going to be computing
+    //
+    //   S += F'F - F'E(E'E)^{-1}E'F
+    //
+    // for each Chunk. The computation is broken down into a number of
+    // function calls as below.
+    
+    // Compute the Q-factor of E.
+    const double * values = A->values();
+    Eigen::HouseholderQR<Matrix> qr(e_block_row_size, e_block_col_size);
+    qr.compute(
+        ConstMatrixRef(
+            values + bs->rows[chunk.start].cells.front().position,
+            e_block_row_size, e_block_col_size));
+    Matrix eq = qr.householderQ() * Matrix::Identity(e_block_row_size,
+                                                     e_block_col_size);
+    
+    // Compute the outer product of the e_blocks with themselves (ete
+    // = E'E). Compute the product of the e_blocks with the
+    // corresonding f_blocks (buffer = E'F), the gradient of the terms
+    // in this chunk (g) and add the outer product of the f_blocks to
+    // Schur complement (S += F'F).
+    ChunkDiagonalBlockUsingBlockQR(
+        chunk, A, b, chunk.start, eq, buffer, lhs);
+    
+    // For the current chunk compute and update the rhs of the reduced
+    // linear system.
+    //
+    //   rhs = F'b - F'E(E'E)^(-1) E'b
+    // jhh37 : using E(E'E)^(-1)g = EQ * (EQ' * b)
+    FixedArray<double, 8> eqt_b(e_block_col_size);
+    FixedArray<double, 8> eqeqt_b(e_block_row_size);
+    int b_pos = bs->rows[chunk.start].block.position;
+    
+    MatrixTransposeVectorMultiply<Eigen::Dynamic, kEBlockSize, 0>(
+        eq.data(),
+        e_block_row_size,
+        e_block_col_size,
+        b + b_pos,
+        eqt_b.get());
+    MatrixVectorMultiply<Eigen::Dynamic, kEBlockSize, 0>(
+        eq.data(),
+        e_block_row_size,
+        e_block_col_size,
+        eqt_b.get(),
+        eqeqt_b.get());
+    
+    UpdateRhsUsingBlockQR(chunk, A, b, chunk.start, eqeqt_b.get(), rhs);
+    
+    // S -= F'E(E'E)^{-1}E'F
+    ChunkOuterProductUsingBlockQR(bs, eq, buffer, chunk.buffer_layout, lhs);
+  }
+  
+  // For rows with no e_blocks, the schur complement update reduces to
+  // S += F'F.
+  NoEBlockRowsUpdate(A, b,  uneliminated_row_begins_, lhs, rhs);
+}
+  
+// Update the rhs of the reduced linear system. Compute
+//
+//   F'b - F' (Eq Eq') b
+template <int kRowBlockSize, int kEBlockSize, int kFBlockSize>
+void
+SchurEliminator<kRowBlockSize, kEBlockSize, kFBlockSize>::
+UpdateRhsUsingBlockQR(const Chunk& chunk,
+                      const BlockSparseMatrix* A,
+                      const double* b,
+                      int row_block_counter,
+                      const double * eqeqt_b,
+                      double* rhs) {
+  const CompressedRowBlockStructure* bs = A->block_structure();
+  
+  int b_pos = bs->rows[row_block_counter].block.position;
+  int eqeqt_b_pos = 0;
+  const double* values = A->values();
+  for (int j = 0; j < chunk.size; ++j) {
+    const CompressedRow& row = bs->rows[row_block_counter + j];
+    
+    typename EigenTypes<kRowBlockSize>::Vector sj =
+    typename EigenTypes<kRowBlockSize>::ConstVectorRef(
+        b + b_pos,
+        row.block.size)
+      - typename EigenTypes<kRowBlockSize>::ConstVectorRef(
+            eqeqt_b + eqeqt_b_pos,
+            row.block.size);
+    
+    for (int c = 1; c < row.cells.size(); ++c) {
+      const int block_id = row.cells[c].block_id;
+      const int block_size = bs->cols[block_id].size;
+      const int block = block_id - num_eliminate_blocks_;
+      CeresMutexLock l(rhs_locks_[block]);
+      MatrixTransposeVectorMultiply<kRowBlockSize, kFBlockSize, 1>(
+          values + row.cells[c].position,
+          row.block.size, block_size,
+          sj.data(), rhs + lhs_row_layout_[block]);
+    }
+    b_pos += row.block.size;
+    eqeqt_b_pos += row.block.size;
+  }
+}
+  
+// Given a Chunk - set of rows with the same e_block, e.g. in the
+// following Chunk with two rows.
+//
+//                E                   F
+//      [ y11   0   0   0 |  z11     0    0   0    z51]
+//      [ y12   0   0   0 |  z12   z22    0   0      0]
+//
+// this function computes twp matrices. The diagonal block matrix
+//
+//   ete = y11 * y11' + y12 * y12'
+//
+// and the off diagonal blocks in the Guass Newton Hessian.
+//
+//   buffer = [y11'(z11 + z12), y12' * z22, y11' * z51]
+//
+// which are zero compressed versions of the block sparse matrices E'E
+// and E'F.
+//
+// and the gradient of the e_block, E'b.
+template <int kRowBlockSize, int kEBlockSize, int kFBlockSize>
+void
+SchurEliminator<kRowBlockSize, kEBlockSize, kFBlockSize>::
+ChunkDiagonalBlockUsingBlockQR(
+    const Chunk& chunk,
+    const BlockSparseMatrix* A,
+    const double* b,
+    int row_block_counter,
+    const Matrix& eq,
+    double* buffer,
+    BlockRandomAccessMatrix* lhs) {
+  const CompressedRowBlockStructure* bs = A->block_structure();
+  
+  int b_pos = bs->rows[row_block_counter].block.position;
+  int eq_pos = 0;
+  const int e_block_size = eq.cols();
+  
+  // Iterate over the rows in this chunk, for each row, compute the
+  // contribution of its F blocks to the Schur complement, the
+  // contribution of its E block to the matrix E'E (ete), and the
+  // corresponding block in the gradient vector.
+  const double* values = A->values();
+  for (int j = 0; j < chunk.size; ++j) {
+    const CompressedRow& row = bs->rows[row_block_counter + j];
+    
+    if (row.cells.size() > 1) {
+      EBlockRowOuterProduct(A, row_block_counter + j, lhs);
+    }
+    
+    // buffer = EQ'F. This computation is done by iterating over the
+    // f_blocks for each row in the chunk.
+    for (int c = 1; c < row.cells.size(); ++c) {
+      const int f_block_id = row.cells[c].block_id;
+      const int f_block_size = bs->cols[f_block_id].size;
+      double* buffer_ptr =
+      buffer +  FindOrDie(chunk.buffer_layout, f_block_id);
+      MatrixTransposeMatrixMultiply
+      <kRowBlockSize, kEBlockSize, kRowBlockSize, kFBlockSize, 1>(
+          eq.data() + eq_pos, row.block.size, e_block_size,
+          values + row.cells[c].position, row.block.size, f_block_size,
+          buffer_ptr, 0, 0, e_block_size, f_block_size);
+    }
+    b_pos += row.block.size;
+    eq_pos += row.block.size * e_block_size;
+  }
+}
+  
+// Compute the outer product F'E(E'E)^{-1}E'F and subtract it from the
+// Schur complement matrix, i.e
+//
+//  S -= F'E(E'E)^{-1}E'F.
+template <int kRowBlockSize, int kEBlockSize, int kFBlockSize>
+void
+SchurEliminator<kRowBlockSize, kEBlockSize, kFBlockSize>::
+ChunkOuterProductUsingBlockQR(const CompressedRowBlockStructure* bs,
+                              const Matrix& eq,
+                              const double* buffer,
+                              const BufferLayoutType& buffer_layout,
+                              BlockRandomAccessMatrix* lhs) {
+  // This is the most computationally expensive part of this
+  // code. Profiling experiments reveal that the bottleneck is not the
+  // computation of the right-hand matrix product, but memory
+  // references to the left hand side.
+  const int e_block_size = eq.cols();
+  BufferLayoutType::const_iterator it1 = buffer_layout.begin();
+  
+  // S(i,j) -= (bi' * eq) (eq' * b_j)
+  for (; it1 != buffer_layout.end(); ++it1) {
+    const int block1 = it1->first - num_eliminate_blocks_;
+    const int block1_size = bs->cols[it1->first].size;
+    
+    BufferLayoutType::const_iterator it2 = it1;
+    for (; it2 != buffer_layout.end(); ++it2) {
+      const int block2 = it2->first - num_eliminate_blocks_;
+      
+      int r, c, row_stride, col_stride;
+      CellInfo* cell_info = lhs->GetCell(block1, block2,
+                                         &r, &c,
+                                         &row_stride, &col_stride);
+      if (cell_info != NULL) {
+        const int block2_size = bs->cols[it2->first].size;
+        CeresMutexLock l(&cell_info->m);
+        MatrixTransposeMatrixMultiply
+        <kEBlockSize, kFBlockSize, kEBlockSize, kFBlockSize, -1>(
+            buffer + it1->second, e_block_size, block1_size,
+            buffer + it2->second, e_block_size, block2_size,
+            cell_info->values, r, c, row_stride, col_stride);
+      }
+    }
+  }
+}
+  
 }  // namespace internal
 }  // namespace ceres
 

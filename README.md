@@ -1,26 +1,55 @@
-Ceres Solver
-============
+# Ceres Solver with VarPro
+This repository contains a patch for the [Ceres Solver](http://ceres-solver.org/) that correctly implements the variable projection (VarPro) method using Ruhe and Wedin algorithm 2. The code is provided without any warranty. If using this patch, please cite our work as shown below.
+```
+@inproceedings{hong17, 
+    author = {J. H. Hong and C. Zach and A. Fitzgibbon}, 
+    booktitle = {2017 IEEE Conference on Computer Vision and Pattern Recognition (CVPR)}, 
+    title = {Revisiting the Variable Projection Method for Separable Nonlinear Least Squares Problems}, 
+    year = {2017}, 
+    pages = {5939--5947}, 
+    doi = {10.1109/CVPR.2017.629}, 
+    ISSN = {1063-6919}, 
+    month = {July}
+}
+```
 
-Ceres Solver is an open source C++ library for modeling and solving
-large, complicated optimization problems. It is a feature rich, mature
-and performant library which has been used in production at Google
-since 2010. Ceres Solver can solve two kinds of problems.
+## Additional option parameters
+Below lists a series of additional option parameters added to this patch.
+```
+InnerIterationType inner_iteration_type: EMBEDDED_POINT_ITERATION (default), RUHE_WEDIN_ALGORITHM_2
+```
+```
+RadiusUpdateType trust_region_radius_update_type: TRUST_REGION_UPDATE (default), TRADITIONAL_UPDATE
+```
+```
+bool use_linear_inner_iterations: true, false (default)
+```
+```
+bool use_block_qr_for_rw2: true, false (default)
+```
+```
+DampingType lm_damping_type: MARQUARDT (default), LEVENBERG
+```
+```
+bool initialize_with_inner_iteration: true (default), false
+```
 
-1. Non-linear Least Squares problems with bounds constraints.
-2. General unconstrained optimization problems.
+For the moment, a subset of these options (e.g. RUHE_WEDIN_ALGORITHM_2 + TRADITIONAL_UPDATE) is required to configure Ruhe and Wedin 2 as the expected cost change used in TRUST_REGION_UPDATE is not properly calcuated for separable nonlinear least squares (SNLS) problems.
 
-Please see [ceres-solver.org](http://ceres-solver.org/) for more
-information.
+## How to run VarPro (RW2)?
+1. Make sure that your nonlinear least squares problem is a type of separable nonlinear least squares problems (see our [paper](https://pdfs.semanticscholar.org/43b4/f13b2beb3d224d8e8a1b67f0192ccf014ee8.pdf)).
+2. Check that your inner iteration ordering (whether automatically or manually set) eliminates the linear set of parameters.
+3. Set the following option parameters as follows:
 
-WARNING - Do not make GitHub pull requests!
--------------------------------------------
+```
+inner_iteration_type:           RUHE_WEDIN_ALGORITHM_2  (compulsory)
+trust_region_radius_update      TRADITIONAL_UPDATE      (compulsory for now)
+use_linear_inner_iterations:    true                    (optional but preferred)
+use_block_qr_for_rw2:           true                    (optional but preferred, improves conditioning of the reduced GN matrix)
+lm_damping_type:                LEVENBERG               (optional, sometimes MARQUARDT can also be fine.)
+initialize_with_inner_iteration true                    (optional, just to make it more ``VarPro'')
 
-Ceres development happens on
-[Gerrit](https://ceres-solver.googlesource.com/), including both
-repository hosting and code reviews. The GitHub Repository is a
-continuously updated mirror which is primarily meant for issue
-tracking. Please see our [Contributing to Ceres Guide](http://ceres-solver.org/contributing.html) for more details.
+```
 
-The upstream Gerrit repository is
-
-    https://ceres-solver.googlesource.com/ceres-solver
+## Bug report
+Please email jhh37@cantab.net for issues related to this patch.

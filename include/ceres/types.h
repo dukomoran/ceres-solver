@@ -294,6 +294,29 @@ enum TrustRegionStrategyType {
   DOGLEG
 };
   
+// Ceres supports two strategies for updating the trust-region radius.
+enum RadiusUpdateType {
+  // The traditional update checks the cost change to decide whether to
+  // increase or decrease the trust-region radius.
+  TRADITIONAL_UPDATE,
+  
+  // The trust region rule uses the step quality to determine the
+  // trust-region radius.
+  // Step quality := actual cost change / model cost change.
+  TRUST_REGION_UPDATE,
+};
+
+// Ceres supports two approaches for inner iterations.
+enum InnerIterationType {
+  // Embedded point iterations (EPI) performs joint optimization
+  // followed by minimization over the eliminated set of paramters.
+  EMBEDDED_POINT_ITERATION,
+  
+  // Ruhe and Wedin Algorithm 2 (RW2) performs minimization on the
+  // reduced problem. See Ruhe and Wedin (1980).
+  RUHE_WEDIN_ALGORITHM_2
+};
+  
 // Ceres supports two types of damping for LevenbergMarquardtStrategy.
 enum DampingType {
   // Levenberg uses eye(size(JTJ)).
@@ -470,6 +493,12 @@ CERES_EXPORT const char* TrustRegionStrategyTypeToString(
 CERES_EXPORT bool StringToTrustRegionStrategyType(std::string value,
                                      TrustRegionStrategyType* type);
 
+CERES_EXPORT const char* RadiusUpdateTypeToString(RadiusUpdateType type);
+CERES_EXPORT bool StringToRadiusUpdateType(std::string value, RadiusUpdateType* type);
+  
+CERES_EXPORT const char* InnerIterationTypeToString(InnerIterationType type);
+CERES_EXPORT bool StringToInnerIterationType(std::string value, InnerIterationType* type);
+  
 CERES_EXPORT const char* DampingTypeToString(DampingType type);
 CERES_EXPORT bool StringToDampingType(std::string value, DampingType* type);
   

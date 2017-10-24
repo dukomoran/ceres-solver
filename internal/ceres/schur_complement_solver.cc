@@ -140,7 +140,17 @@ LinearSolver::Summary SchurComplementSolver::SolveImpl(
   std::fill(x, x + A->num_cols(), 0.0);
   event_logger.AddEvent("Setup");
 
-  eliminator_->Eliminate(A, b, per_solve_options.D, lhs_.get(), rhs_.get());
+  // If RW2 is enabled and the block QR flag is on,
+  // use block QR factorization.
+  bool use_block_qr =
+      (options_.use_block_qr_for_rw2 &
+       per_solve_options.rw2_is_enabled);
+  
+  if (use_block_qr) {
+    eliminator_->EliminateUsingBlockQR(A, b, per_solve_options.D, lhs_.get(), rhs_.get());
+  } else {
+      eliminator_->Eliminate(A, b, per_solve_options.D, lhs_.get(), rhs_.get());
+  }
   event_logger.AddEvent("Eliminate");
 
   double* reduced_solution = x + A->num_cols() - lhs_->num_cols();
@@ -148,8 +158,16 @@ LinearSolver::Summary SchurComplementSolver::SolveImpl(
       SolveReducedLinearSystem(per_solve_options, reduced_solution);
   event_logger.AddEvent("ReducedSolve");
 
+  // If using linear RW2, skip the back-substitute procedure.
+  // (One step of inner iteration suffices if the residual is
+  // linear in the eliminated parameters.)
+  bool skip_backsubstitute =
+      (options_.skip_backsubstitute_for_inner_iterations &
+       per_solve_options.rw2_is_enabled);
   if (summary.termination_type == LINEAR_SOLVER_SUCCESS) {
-    eliminator_->BackSubstitute(A, b, per_solve_options.D, reduced_solution, x);
+    if (!skip_backsubstitute) {
+        eliminator_->BackSubstitute(A, b, per_solve_options.D, reduced_solution, x);
+    }
     event_logger.AddEvent("BackSubstitute");
   }
 

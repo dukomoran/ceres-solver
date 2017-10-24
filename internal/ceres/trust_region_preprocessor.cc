@@ -194,6 +194,10 @@ bool SetupLinearSolver(PreprocessedProblem* pp) {
       options.use_explicit_schur_complement;
   pp->linear_solver_options.dynamic_sparsity = options.dynamic_sparsity;
   pp->linear_solver_options.num_threads = options.num_threads;
+  pp->linear_solver_options.use_block_qr_for_rw2 =
+      options.use_block_qr_for_rw2;
+  pp->linear_solver_options.skip_backsubstitute_for_inner_iterations =
+      options.use_linear_inner_iterations;
   pp->linear_solver_options.use_postordering = options.use_postordering;
   pp->linear_solver_options.context = pp->problem->context();
 
@@ -305,6 +309,7 @@ bool SetupInnerIterationMinimizer(PreprocessedProblem* pp) {
   return pp->inner_iteration_minimizer->Init(*pp->reduced_program,
                                              pp->problem->parameter_map(),
                                              *options.inner_iteration_ordering,
+                                             options,
                                              &pp->error);
 }
 
@@ -328,6 +333,7 @@ void SetupMinimizerOptions(PreprocessedProblem* pp) {
   strategy_options.max_lm_diagonal = options.max_lm_diagonal;
   strategy_options.trust_region_strategy_type =
       options.trust_region_strategy_type;
+  strategy_options.radius_update_type = options.trust_region_radius_update_type;
   strategy_options.lm_damping_type = options.lm_damping_type;
   strategy_options.dogleg_type = options.dogleg_type;
   pp->minimizer_options.trust_region_strategy.reset(

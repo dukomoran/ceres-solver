@@ -53,6 +53,8 @@ LevenbergMarquardtStrategy::LevenbergMarquardtStrategy(
       max_diagonal_(options.max_lm_diagonal),
       decrease_factor_(2.0),
       reuse_diagonal_(false),
+      radius_update_type_(options.radius_update_type),
+      infinite_radius_(options.infinite_radius),
       damping_type_(options.lm_damping_type) {
   CHECK_NOTNULL(linear_solver_);
   CHECK_GT(min_diagonal_, 0.0);
@@ -78,26 +80,47 @@ TrustRegionStrategy::Summary LevenbergMarquardtStrategy::ComputeStep(
       diagonal_.resize(num_parameters, 1);
     }
 
-    switch(damping_type_) {
-      case LEVENBERG:
-        // Levenberg damping = eye(size(JTJ)).
-        // Reuse this every time.
-        diagonal_.setOnes();
-        break;
-      case MARQUARDT:
-        // Marquardt damping = diag(diag(JTJ)).
-        jacobian->SquaredColumnNorm(diagonal_.data());
-        break;
-    }
-    for (int i = 0; i < num_parameters; ++i) {
-      diagonal_[i] = std::min(std::max(diagonal_[i], min_diagonal_),
-                              max_diagonal_);
+    if (infinite_radius_) {
+      // Infinite trust-region radius = no damping.
+      // Reuse this every time.
+      if (lm_diagonal_.rows() != num_parameters) {
+        lm_diagonal_.resize(num_parameters, 1);
+      }
+      lm_diagonal_.setZero();
+      reuse_diagonal_ = true;
+    } else {
+      switch(damping_type_) {
+        case LEVENBERG:
+          // Levenberg damping = eye(size(JTJ)).
+          // Reuse this every time.
+          diagonal_.setOnes();
+          break;
+        case MARQUARDT:
+          // Marquardt damping = diag(diag(JTJ)).
+          jacobian->SquaredColumnNorm(diagonal_.data());
+          break;
+      }
+      
+      for (int i = 0; i < per_solve_options.zero_damping_offset; ++i) {
+        // Get rid of the diagonals for the eliminated parameters in VarPro.
+        diagonal_[i] = 0.0;
+      }
+      for (int i = per_solve_options.zero_damping_offset; i < num_parameters; ++i) {
+        diagonal_[i] = std::min(std::max(diagonal_[i], min_diagonal_),
+                                max_diagonal_);
+      }
     }
   }
 
-  lm_diagonal_ = (diagonal_ / radius_).array().sqrt();
+  // If some damping is present, update the diagonal.
+  if (!infinite_radius_) {
+    lm_diagonal_ = (diagonal_ / radius_).array().sqrt();
+  }
 
   LinearSolver::PerSolveOptions solve_options;
+  // Tell the solver that RW2 is enabled for this step.
+  // (e.g. Schur complement solver may use block QR factorization if RW2 is on.)
+  solve_options.rw2_is_enabled = (per_solve_options.zero_damping_offset > 0);
   solve_options.D = lm_diagonal_.data();
   solve_options.q_tolerance = per_solve_options.eta;
   // Disable r_tolerance checking. Since we only care about
@@ -156,12 +179,26 @@ TrustRegionStrategy::Summary LevenbergMarquardtStrategy::ComputeStep(
 }
 
 void LevenbergMarquardtStrategy::StepAccepted(double step_quality) {
-  CHECK_GT(step_quality, 0.0);
-  radius_ = radius_ / std::max(1.0 / 3.0,
-                               1.0 - pow(2.0 * step_quality - 1.0, 3));
-  radius_ = std::min(max_radius_, radius_);
   decrease_factor_ = 2.0;
-  reuse_diagonal_ = false;
+  switch(radius_update_type_) {
+    case TRADITIONAL_UPDATE:
+      // The traditional rule does not utilise the step quality.
+      // The radius is increased by the predefined factor.
+      radius_ = radius_ * decrease_factor_;
+      break;
+      
+    case TRUST_REGION_UPDATE:
+      // The trust region rule utilises the step quality.
+      CHECK_GT(step_quality, 0.0);
+      radius_ = radius_ / std::max(1.0 / 3.0,
+                                   1.0 - pow(2.0 * step_quality - 1.0, 3));
+      break;
+  }
+  radius_ = std::min(max_radius_, radius_);
+  // If damping is on, do not re-use the diagonal.
+  if (!infinite_radius_) {
+    reuse_diagonal_ = false;
+  }
 }
 
 void LevenbergMarquardtStrategy::StepRejected(double step_quality) {

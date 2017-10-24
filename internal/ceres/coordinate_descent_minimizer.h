@@ -39,6 +39,7 @@
 #include "ceres/minimizer.h"
 #include "ceres/problem_impl.h"
 #include "ceres/solver.h"
+#include "ceres/trust_region_strategy.h"
 
 namespace ceres {
 namespace internal {
@@ -63,6 +64,7 @@ class CoordinateDescentMinimizer : public Minimizer {
   bool Init(const Program& program,
             const ProblemImpl::ParameterMap& parameter_map,
             const ParameterBlockOrdering& ordering,
+            const Solver::Options& options,
             std::string* error);
 
   // Minimizer interface.
@@ -82,6 +84,10 @@ class CoordinateDescentMinimizer : public Minimizer {
   // seems to work better in practice, i.e., Cameras before
   // points.
   static ParameterBlockOrdering* CreateOrdering(const Program& program);
+  
+  // Find the parameter offset at which the parameters are not
+  // eliminated through inner iterations.
+  virtual int UneliminatedParameterOffset() const;
 
  private:
   void Solve(Program* program,
@@ -97,9 +103,13 @@ class CoordinateDescentMinimizer : public Minimizer {
   // sets in parameter_blocks_.
   std::vector<int> independent_set_offsets_;
 
+  Options options_;
   Evaluator::Options evaluator_options_;
+  TrustRegionStrategy::Options trs_options_;
 
   ContextImpl* context_;
+  
+  int uneliminated_parameter_offset_;
 };
 
 }  // namespace internal
