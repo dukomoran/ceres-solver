@@ -43,7 +43,9 @@ Vector residuals(Vector u, Vector v) { return F(u) + G(u) * v; }
 ```
 where the `*` operator is matrix/vector multiplication.  Note that this includes matrix/tensor `v` too, via reshaping.  You don't need to explicitly reshape, it just needs to be linear in `v`.
 For more details, see our [paper](https://pdfs.semanticscholar.org/43b4/f13b2beb3d224d8e8a1b67f0192ccf014ee8.pdf).
+
 2. Check that your inner iteration ordering (whether automatically or manually set) eliminates the linear set of parameters (`v` above).
+
 3. Set the following option parameters as follows:
 
 ```
